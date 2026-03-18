@@ -16,28 +16,41 @@ fn full_pipeline_samskara_world() {
         db.run_script(trimmed).expect("load schema statement");
     }
 
-    // Seed liveness_vocab so vocab detection can query rows
+    // Seed phase_vocab so vocab detection can query rows
     db.run_script(
-        r#"?[name, rank, in_live_portion, description] <- [
-            ["doctrine", 0, true, "foundational invariant"],
-            ["trusted_fact", 1, true, "verified"],
-            ["observation", 2, true, "learned"],
-            ["rumor", 3, true, "unverified"],
-            ["web_gossip", 4, true, "external"],
-            ["superseded", 5, false, "replaced"],
-            ["disproven", 6, false, "contradicted"]
+        r#"?[name, glyph, in_world_hash, description] <- [
+            ["sol", "☉", true, "Manifest — committed truth"],
+            ["luna", "☽", false, "Becoming — staged, proposed"],
+            ["saturnus", "♄", false, "Archived — superseded, retained"]
         ]
-        :put liveness_vocab {name => rank, in_live_portion, description}"#,
+        :put Phase {name => glyph, in_world_hash, description}"#,
     )
-    .expect("seed liveness_vocab");
+    .expect("seed Phase");
+
+    // Seed dignity_vocab
+    db.run_script(
+        r#"?[name, rank, description] <- [
+            ["domicile", 0, "Foundational invariant"],
+            ["exaltation", 1, "Verified through trusted source"],
+            ["peregrine", 2, "Learned through observation"],
+            ["detriment", 3, "Unverified claim"],
+            ["fall", 4, "External web source"]
+        ]
+        :put Dignity {name => rank, description}"#,
+    )
+    .expect("seed Dignity");
 
     // Generate schema
     let schema = SchemaGenerator::from_db(&db).expect("from_db");
 
-    // Should have detected liveness_vocab as an enum
+    // Should have detected phase_vocab and dignity_vocab as enums
     assert!(
-        schema.enums.iter().any(|e| e.name == "Liveness"),
-        "should detect Liveness enum from liveness_vocab"
+        schema.enums.iter().any(|e| e.name == "Phase"),
+        "should detect Phase enum from phase_vocab"
+    );
+    assert!(
+        schema.enums.iter().any(|e| e.name == "Dignity"),
+        "should detect Dignity enum from dignity_vocab"
     );
 
     // Should have multiple relation structs
@@ -55,7 +68,8 @@ fn full_pipeline_samskara_world() {
     assert!(capnp_text.contains("struct Thought"), "should have Thought struct");
     assert!(capnp_text.contains("struct AgentSession"), "should have AgentSession struct");
     assert!(capnp_text.contains("struct WorldCommit"), "should have WorldCommit struct");
-    assert!(capnp_text.contains("enum Liveness"), "should have Liveness enum");
+    assert!(capnp_text.contains("enum Phase"), "should have Phase enum");
+    assert!(capnp_text.contains("enum Dignity"), "should have Dignity enum");
 
     // Field naming conventions
     assert!(capnp_text.contains("createdTs"), "should camelCase created_ts");
