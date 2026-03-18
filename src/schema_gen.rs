@@ -121,7 +121,8 @@ impl SchemaGenerator {
         }
         let hash = hasher.finalize();
         let bytes: [u8; 8] = hash.as_bytes()[..8].try_into().unwrap();
-        u64::from_le_bytes(bytes)
+        // Cap'n Proto requires the high bit set in file IDs
+        u64::from_le_bytes(bytes) | 0x8000000000000000
     }
 }
 

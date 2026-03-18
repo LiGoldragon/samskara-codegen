@@ -30,11 +30,11 @@ fn full_pipeline_samskara_world() {
     // Seed dignity_vocab
     db.run_script(
         r#"?[name, rank, description] <- [
-            ["domicile", 0, "Foundational invariant"],
-            ["exaltation", 1, "Verified through trusted source"],
-            ["peregrine", 2, "Learned through observation"],
-            ["detriment", 3, "Unverified claim"],
-            ["fall", 4, "External web source"]
+            ["eternal", 0, "Immutable, always-true"],
+            ["proven", 1, "Accomplished, verified"],
+            ["seen", 2, "Witnessed, observed"],
+            ["uncertain", 3, "Doubt, unverified"],
+            ["delusion", 4, "Error, unreliable source"]
         ]
         :put Dignity {name => rank, description}"#,
     )
