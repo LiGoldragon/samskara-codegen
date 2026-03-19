@@ -27,6 +27,20 @@ impl SchemaGenerator {
     /// Introspect a CozoDB instance: query `::relations` and `::columns` for
     /// each relation, detect vocab enums, and build the full schema.
     pub fn from_db(db: &criome_cozo::CriomeDb) -> Result<Self, CodegenError> {
+        // Query the Enum registry if it exists (belt and suspenders with PascalCase detection)
+        let enum_registry: std::collections::HashSet<String> = db
+            .run_script("?[name] := *Enum{name}")
+            .ok()
+            .and_then(|v| v.get("rows")?.as_array().cloned())
+            .map(|rows| {
+                rows.iter()
+                    .filter_map(|row| {
+                        datavalue::as_str(row.as_array()?.first()?).map(String::from)
+                    })
+                    .collect()
+            })
+            .unwrap_or_default();
+
         let relations_result = db.run_script("::relations")?;
         let rows = relations_result
             .get("rows")
@@ -49,7 +63,22 @@ impl SchemaGenerator {
             let columns_result = db.run_script(&format!("::columns {name}"))?;
             let columns = column_info::from_columns_result(&columns_result)?;
 
-            if vocab_detect::is_vocab_relation(name, &columns) {
+            let is_pascal = vocab_detect::is_vocab_relation(name, &columns);
+            let in_registry = enum_registry.contains(name);
+
+            if is_pascal && in_registry {
+                // Both signals agree — this is an enum
+                let enum_schema = vocab_detect::build_enum_schema(db, name, &columns)?;
+                enums.push(enum_schema);
+            } else if is_pascal && !in_registry && !enum_registry.is_empty() {
+                // PascalCase + single String key but NOT in Enum registry — treat as struct
+                // (the registry is authoritative when it exists)
+                relations.push(RelationSchema {
+                    name: name.clone(),
+                    columns,
+                });
+            } else if is_pascal {
+                // No registry exists yet — fall back to PascalCase detection alone
                 let enum_schema = vocab_detect::build_enum_schema(db, name, &columns)?;
                 enums.push(enum_schema);
             } else {
@@ -77,7 +106,7 @@ impl SchemaGenerator {
         for e in &sorted_enums {
             out.push_str(&format!("enum {} {{\n", e.name));
             for (i, variant) in e.variants.iter().enumerate() {
-                out.push_str(&format!("  {} @{};\n", to_camel_case(variant), i));
+                out.push_str(&format!("  {} @{};\n", to_capnp_enumerant(variant), i));
             }
             out.push_str("}\n\n");
         }
@@ -140,6 +169,25 @@ fn to_pascal_case(s: &str) -> String {
             }
         })
         .collect()
+}
+
+/// Convert enum variant to capnp enumerant: lowercase first char.
+/// Handles snake_case (`commit_type` → `commitType`), PascalCase (`CommitType` → `commitType`),
+/// and plain lowercase (`sol` → `sol`).
+fn to_capnp_enumerant(s: &str) -> String {
+    // If it contains underscores, treat as snake_case → camelCase
+    if s.contains('_') {
+        return to_camel_case(s);
+    }
+    // Otherwise, lowercase the first character
+    let mut chars = s.chars();
+    match chars.next() {
+        None => String::new(),
+        Some(c) => {
+            let lower: String = c.to_lowercase().collect();
+            lower + chars.as_str()
+        }
+    }
 }
 
 /// Convert snake_case to camelCase: `created_ts` → `createdTs`.
