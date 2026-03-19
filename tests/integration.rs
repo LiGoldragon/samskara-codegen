@@ -1,56 +1,44 @@
 use samskara_codegen::SchemaGenerator;
 
-/// Load the samskara-world schema into an in-memory CozoDB, then generate
-/// the .capnp output and verify it's deterministic and well-formed.
+fn is_comment_only(stmt: &str) -> bool {
+    stmt.lines()
+        .all(|line| {
+            let trimmed = line.trim();
+            trimmed.is_empty() || trimmed.starts_with('#') || trimmed == "//"
+        })
+}
+
+fn load_script(db: &criome_cozo::CriomeDb, script: &str) {
+    for stmt in criome_cozo::split_cozo_statements(script) {
+        let trimmed = stmt.trim();
+        if !trimmed.is_empty() && !is_comment_only(trimmed) {
+            db.run_script(trimmed)
+                .unwrap_or_else(|e| panic!("load failed: {e}\nStatement: {trimmed}"));
+        }
+    }
+}
+
+/// Load the samskara-world schema + seed into an in-memory CozoDB, then
+/// generate the .capnp output and verify it's deterministic and well-formed.
 #[test]
 fn full_pipeline_samskara_world() {
     let db = criome_cozo::CriomeDb::open_memory().expect("open memory db");
 
-    // Load the samskara-world-init schema
-    let schema_script = include_str!("../../Mentci/Core/samskara-world-init.cozo");
-    for stmt in criome_cozo::split_cozo_statements(schema_script) {
-        let trimmed = stmt.trim();
-        if trimmed.is_empty() || is_comment_only(trimmed) {
-            continue;
-        }
-        db.run_script(trimmed).expect("load schema statement");
-    }
-
-    // Seed phase_vocab so vocab detection can query rows
-    db.run_script(
-        r#"?[name, glyph, in_world_hash, description] <- [
-            ["sol", "☉", true, "Manifest — committed truth"],
-            ["luna", "☽", false, "Becoming — staged, proposed"],
-            ["saturnus", "♄", false, "Archived — superseded, retained"]
-        ]
-        :put Phase {name => glyph, in_world_hash, description}"#,
-    )
-    .expect("seed Phase");
-
-    // Seed dignity_vocab
-    db.run_script(
-        r#"?[name, rank, description] <- [
-            ["eternal", 0, "Immutable, always-true"],
-            ["proven", 1, "Accomplished, verified"],
-            ["seen", 2, "Witnessed, observed"],
-            ["uncertain", 3, "Doubt, unverified"],
-            ["delusion", 4, "Error, unreliable source"]
-        ]
-        :put Dignity {name => rank, description}"#,
-    )
-    .expect("seed Dignity");
+    // Load schema and seed from their authoritative files — no inline data
+    load_script(&db, include_str!("../../Mentci/Core/samskara-world-init.cozo"));
+    load_script(&db, include_str!("../../samskara/schema/samskara-world-seed.cozo"));
 
     // Generate schema
     let schema = SchemaGenerator::from_db(&db).expect("from_db");
 
-    // Should have detected phase_vocab and dignity_vocab as enums
+    // Should have detected Phase and Dignity as enums
     assert!(
         schema.enums.iter().any(|e| e.name == "Phase"),
-        "should detect Phase enum from phase_vocab"
+        "should detect Phase enum"
     );
     assert!(
         schema.enums.iter().any(|e| e.name == "Dignity"),
-        "should detect Dignity enum from dignity_vocab"
+        "should detect Dignity enum"
     );
 
     // Should have multiple relation structs
@@ -84,16 +72,7 @@ fn full_pipeline_samskara_world() {
     let hash_2 = schema.schema_hash().expect("hash 2");
     assert_eq!(hash_1, hash_2, "schema hash must be deterministic");
 
-    // Print for manual inspection
     eprintln!("--- Generated .capnp schema ---");
     eprintln!("{capnp_text}");
     eprintln!("--- Schema hash: {hash_1} ---");
-}
-
-fn is_comment_only(stmt: &str) -> bool {
-    stmt.lines()
-        .all(|line| {
-            let trimmed = line.trim();
-            trimmed.is_empty() || trimmed.starts_with('#') || trimmed == "//"
-        })
 }
