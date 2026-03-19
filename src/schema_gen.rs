@@ -27,7 +27,9 @@ impl SchemaGenerator {
     /// Introspect a CozoDB instance: query `::relations` and `::columns` for
     /// each relation, detect vocab enums, and build the full schema.
     pub fn from_db(db: &criome_cozo::CriomeDb) -> Result<Self, CodegenError> {
-        // Query the Enum registry if it exists (belt and suspenders with PascalCase detection)
+        // Query the Enum registry — the authority for which relations are enums.
+        // PascalCase is the convention (fast visual signal).
+        // The registry is the truth (authoritative data signal).
         let enum_registry: std::collections::HashSet<String> = db
             .run_script("?[name] := *Enum{name}")
             .ok()
@@ -41,13 +43,14 @@ impl SchemaGenerator {
             })
             .unwrap_or_default();
 
+        let has_registry = !enum_registry.is_empty();
+
         let relations_result = db.run_script("::relations")?;
         let rows = relations_result
             .get("rows")
             .and_then(|v| v.as_array())
             .ok_or_else(|| CodegenError::Schema("::relations missing 'rows'".into()))?;
 
-        // Extract relation names (first column of each row, DataValue-wrapped)
         let mut relation_names: Vec<String> = rows
             .iter()
             .filter_map(|row| {
@@ -63,22 +66,14 @@ impl SchemaGenerator {
             let columns_result = db.run_script(&format!("::columns {name}"))?;
             let columns = column_info::from_columns_result(&columns_result)?;
 
-            let is_pascal = vocab_detect::is_vocab_relation(name, &columns);
             let in_registry = enum_registry.contains(name);
+            let is_pascal = vocab_detect::is_pascal_case(name);
 
-            if is_pascal && in_registry {
-                // Both signals agree — this is an enum
-                let enum_schema = vocab_detect::build_enum_schema(db, name, &columns)?;
-                enums.push(enum_schema);
-            } else if is_pascal && !in_registry && !enum_registry.is_empty() {
-                // PascalCase + single String key but NOT in Enum registry — treat as struct
-                // (the registry is authoritative when it exists)
-                relations.push(RelationSchema {
-                    name: name.clone(),
-                    columns,
-                });
-            } else if is_pascal {
-                // No registry exists yet — fall back to PascalCase detection alone
+            // Registry is authoritative when it exists.
+            // PascalCase alone is the fallback when no registry.
+            let is_enum = if has_registry { in_registry } else { is_pascal };
+
+            if is_enum {
                 let enum_schema = vocab_detect::build_enum_schema(db, name, &columns)?;
                 enums.push(enum_schema);
             } else {

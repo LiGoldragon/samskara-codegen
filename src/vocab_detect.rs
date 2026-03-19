@@ -3,35 +3,30 @@ use crate::datavalue;
 use crate::error::CodegenError;
 use crate::schema_gen::EnumSchema;
 
-/// Check if a relation qualifies as an enum type:
-/// 1. Name starts with an uppercase letter (PascalCase convention)
-/// 2. Exactly one key column
-/// 3. Key column type is `String`
-pub fn is_vocab_relation(name: &str, columns: &[ColumnInfo]) -> bool {
-    let starts_upper = name.chars().next().is_some_and(|c| c.is_uppercase());
-    if !starts_upper {
-        return false;
-    }
-    let key_cols: Vec<&ColumnInfo> = columns.iter().filter(|c| c.is_key).collect();
-    key_cols.len() == 1 && key_cols[0].col_type == "String"
+/// Check if a relation name follows the PascalCase convention.
+/// This is the fast visual signal — the Enum registry is the authority.
+pub fn is_pascal_case(name: &str) -> bool {
+    name.chars().next().is_some_and(|c| c.is_uppercase())
 }
 
 /// Query the enum relation's rows and build an EnumSchema.
 ///
-/// Enum name: the relation name directly (already PascalCase).
-/// Variants: sorted alphabetically by key value.
+/// Finds the first key column and uses it to extract variant names.
+/// Variants are sorted alphabetically.
 pub fn build_enum_schema(
     db: &criome_cozo::CriomeDb,
     relation_name: &str,
     columns: &[ColumnInfo],
 ) -> Result<EnumSchema, CodegenError> {
-    // Relation name IS the enum name (already PascalCase)
     let name = relation_name.to_string();
 
-    // Query all rows — the key column contains the enum variant names.
-    let key_col = &columns.iter().find(|c| c.is_key).unwrap().name;
+    let key_col = columns
+        .iter()
+        .find(|c| c.is_key)
+        .ok_or_else(|| CodegenError::Schema(format!("{relation_name} has no key column")))?;
+
     let result = db.run_script(&format!(
-        "?[val] := *{relation_name}{{{key_col}: val}}"
+        "?[val] := *{relation_name}{{{}: val}}", key_col.name
     ))?;
     let rows = result
         .get("rows")
@@ -54,16 +49,12 @@ mod tests {
     use super::*;
 
     #[test]
-    fn test_is_vocab_uppercase() {
-        let cols = vec![ColumnInfo {
-            name: "name".to_string(),
-            is_key: true,
-            index: 0,
-            col_type: "String".to_string(),
-        }];
-        assert!(is_vocab_relation("Phase", &cols));
-        assert!(is_vocab_relation("Dignity", &cols));
-        assert!(!is_vocab_relation("thought", &cols));
-        assert!(!is_vocab_relation("agent_session", &cols));
+    fn test_is_pascal_case() {
+        assert!(is_pascal_case("Phase"));
+        assert!(is_pascal_case("Dignity"));
+        assert!(is_pascal_case("Enum"));
+        assert!(!is_pascal_case("thought"));
+        assert!(!is_pascal_case("agent_session"));
+        assert!(!is_pascal_case("samskrta"));
     }
 }
