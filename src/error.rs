@@ -1,30 +1,36 @@
 use std::fmt;
 
-/// Errors produced by samskara-codegen operations.
+/// Errors produced by codegen operations.
 #[derive(Debug)]
-pub enum CodegenError {
+pub enum Error {
     /// A CozoDB query failed during schema introspection.
-    Query(String),
+    Query { detail: String },
     /// Schema introspection returned unexpected data.
-    Schema(String),
+    Schema { detail: String },
     /// Type mapping failed for a CozoDB column type.
-    TypeMap(String),
+    TypeMap { detail: String },
 }
 
-impl fmt::Display for CodegenError {
+impl fmt::Display for Error {
     fn fmt(&self, f: &mut fmt::Formatter<'_>) -> fmt::Result {
         match self {
-            CodegenError::Query(msg) => write!(f, "codegen query error: {msg}"),
-            CodegenError::Schema(msg) => write!(f, "codegen schema error: {msg}"),
-            CodegenError::TypeMap(msg) => write!(f, "codegen type map error: {msg}"),
+            Error::Query { detail } => write!(f, "query error: {detail}"),
+            Error::Schema { detail } => {
+                write!(f, "schema error: {detail}")
+            }
+            Error::TypeMap { detail } => {
+                write!(f, "type map error: {detail}")
+            }
         }
     }
 }
 
-impl std::error::Error for CodegenError {}
+impl std::error::Error for Error {}
 
-impl From<criome_cozo::CozoError> for CodegenError {
-    fn from(err: criome_cozo::CozoError) -> Self {
-        CodegenError::Query(err.to_string())
+impl From<criome_cozo::Error> for Error {
+    fn from(err: criome_cozo::Error) -> Self {
+        Error::Query {
+            detail: err.to_string(),
+        }
     }
 }

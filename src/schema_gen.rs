@@ -1,6 +1,6 @@
 use crate::column_info::{self, ColumnInfo};
 use crate::datavalue;
-use crate::error::CodegenError;
+use crate::error::Error;
 use crate::type_map::CapnpType;
 use crate::vocab_detect;
 
@@ -26,7 +26,7 @@ pub struct SchemaGenerator {
 impl SchemaGenerator {
     /// Introspect a CozoDB instance: query `::relations` and `::columns` for
     /// each relation, detect vocab enums, and build the full schema.
-    pub fn from_db(db: &criome_cozo::CriomeDb) -> Result<Self, CodegenError> {
+    pub fn from_db(db: &criome_cozo::CriomeDb) -> Result<Self, Error> {
         // Query the Enum registry — the authority for which relations are enums.
         // PascalCase is the convention (fast visual signal).
         // The registry is the truth (authoritative data signal).
@@ -49,7 +49,7 @@ impl SchemaGenerator {
         let rows = relations_result
             .get("rows")
             .and_then(|v| v.as_array())
-            .ok_or_else(|| CodegenError::Schema("::relations missing 'rows'".into()))?;
+            .ok_or_else(|| Error::Schema { detail: "::relations missing 'rows'".into() })?;
 
         let mut relation_names: Vec<String> = rows
             .iter()
@@ -88,7 +88,7 @@ impl SchemaGenerator {
     }
 
     /// Generate deterministic `.capnp` schema text.
-    pub fn to_capnp_text(&self) -> Result<String, CodegenError> {
+    pub fn to_capnp_text(&self) -> Result<String, Error> {
         let mut out = String::new();
 
         // File ID: blake3 of sorted relation names, truncated to u64
@@ -129,7 +129,7 @@ impl SchemaGenerator {
     }
 
     /// Compute the blake3 hash of the generated schema for content addressing.
-    pub fn schema_hash(&self) -> Result<blake3::Hash, CodegenError> {
+    pub fn schema_hash(&self) -> Result<blake3::Hash, Error> {
         let text = self.to_capnp_text()?;
         Ok(blake3::hash(text.as_bytes()))
     }

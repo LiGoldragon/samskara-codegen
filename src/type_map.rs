@@ -1,6 +1,6 @@
 use std::str::FromStr;
 
-use crate::error::CodegenError;
+use crate::error::Error;
 
 /// Cap'n Proto type corresponding to a CozoDB column type.
 #[derive(Debug, Clone, Copy, PartialEq, Eq)]
@@ -26,7 +26,7 @@ impl CapnpType {
 }
 
 impl FromStr for CapnpType {
-    type Err = CodegenError;
+    type Err = Error;
 
     fn from_str(s: &str) -> Result<Self, Self::Err> {
         match s {
@@ -37,14 +37,9 @@ impl FromStr for CapnpType {
             "Bytes" => Ok(CapnpType::Data),
             "Json" => Ok(CapnpType::Text),
             "List" => Ok(CapnpType::Data),
-            other => Err(CodegenError::TypeMap(format!(
-                "unknown CozoDB type: {other}"
-            ))),
+            other => Err(Error::TypeMap {
+                detail: format!("unknown CozoDB type: {other}"),
+            }),
         }
     }
-}
-
-/// Convenience function matching the plan's API.
-pub fn from_cozo_type(s: &str) -> Result<CapnpType, CodegenError> {
-    s.parse()
 }

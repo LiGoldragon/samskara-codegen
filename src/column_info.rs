@@ -1,5 +1,5 @@
 use crate::datavalue;
-use crate::error::CodegenError;
+use crate::error::Error;
 
 /// One column from CozoDB's `::columns` introspection result.
 pub struct ColumnInfo {
@@ -13,40 +13,40 @@ pub struct ColumnInfo {
 ///
 /// CozoDB `::columns` returns headers: `["column", "is_key", "index", "type", ...]`
 /// Values are wrapped in DataValue tags: `{"Str": "..."}`, `{"Bool": ...}`, etc.
-pub fn from_columns_result(json: &serde_json::Value) -> Result<Vec<ColumnInfo>, CodegenError> {
+pub fn from_columns_result(json: &serde_json::Value) -> Result<Vec<ColumnInfo>, Error> {
     let rows = json
         .get("rows")
         .and_then(|v| v.as_array())
-        .ok_or_else(|| CodegenError::Schema("::columns result missing 'rows' array".into()))?;
+        .ok_or_else(|| Error::Schema { detail: "::columns result missing 'rows' array".into() })?;
 
     let mut columns = Vec::with_capacity(rows.len());
     for (idx, row) in rows.iter().enumerate() {
         let arr = row
             .as_array()
-            .ok_or_else(|| CodegenError::Schema(format!("row {idx} is not an array")))?;
+            .ok_or_else(|| Error::Schema { detail: format!("row {idx} is not an array") })?;
 
         let name = arr
             .first()
             .and_then(datavalue::as_str)
-            .ok_or_else(|| CodegenError::Schema(format!("row {idx} missing column name")))?
+            .ok_or_else(|| Error::Schema { detail: format!("row {idx} missing column name") })?
             .to_string();
 
         let is_key = arr
             .get(1)
             .and_then(datavalue::as_bool)
-            .ok_or_else(|| CodegenError::Schema(format!("row {idx} missing is_key")))?;
+            .ok_or_else(|| Error::Schema { detail: format!("row {idx} missing is_key") })?;
 
         // index is at position 2, type is at position 3
         let index = arr
             .get(2)
             .and_then(datavalue::as_i64)
-            .ok_or_else(|| CodegenError::Schema(format!("row {idx} missing index")))?
+            .ok_or_else(|| Error::Schema { detail: format!("row {idx} missing index") })?
             as u32;
 
         let col_type = arr
             .get(3)
             .and_then(datavalue::as_str)
-            .ok_or_else(|| CodegenError::Schema(format!("row {idx} missing type")))?
+            .ok_or_else(|| Error::Schema { detail: format!("row {idx} missing type") })?
             .to_string();
 
         columns.push(ColumnInfo {

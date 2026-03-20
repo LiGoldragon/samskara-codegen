@@ -1,6 +1,6 @@
 use crate::column_info::ColumnInfo;
 use crate::datavalue;
-use crate::error::CodegenError;
+use crate::error::Error;
 use crate::schema_gen::EnumSchema;
 
 /// Check if a relation name follows the PascalCase convention.
@@ -17,13 +17,13 @@ pub fn build_enum_schema(
     db: &criome_cozo::CriomeDb,
     relation_name: &str,
     columns: &[ColumnInfo],
-) -> Result<EnumSchema, CodegenError> {
+) -> Result<EnumSchema, Error> {
     let name = relation_name.to_string();
 
     let key_col = columns
         .iter()
         .find(|c| c.is_key)
-        .ok_or_else(|| CodegenError::Schema(format!("{relation_name} has no key column")))?;
+        .ok_or_else(|| Error::Schema { detail: format!("{relation_name} has no key column") })?;
 
     let result = db.run_script(&format!(
         "?[val] := *{relation_name}{{{}: val}}", key_col.name
@@ -31,7 +31,7 @@ pub fn build_enum_schema(
     let rows = result
         .get("rows")
         .and_then(|v| v.as_array())
-        .ok_or_else(|| CodegenError::Schema("enum query missing 'rows'".into()))?;
+        .ok_or_else(|| Error::Schema { detail: "enum query missing 'rows'".into() })?;
 
     let mut variants: Vec<String> = rows
         .iter()
