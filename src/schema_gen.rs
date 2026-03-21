@@ -172,6 +172,95 @@ impl SchemaGenerator {
         Ok(out)
     }
 
+    /// Generate deterministic CozoScript `:put` statements for all seed data.
+    /// Queries all manifest-phase rows from versioned relations and emits them
+    /// as reproducible seed data. Rows sorted by key for determinism.
+    pub fn to_cozo_seed_text(&self, db: &criome_cozo::CriomeDb) -> Result<String, Error> {
+        let mut out = String::new();
+        let hash = self.schema_hash()?;
+        out.push_str(&format!("# Generated from live DB — do not edit manually\n"));
+        out.push_str(&format!("# Schema hash: {hash}\n\n"));
+
+        // Collect all relation names (enums + non-enums), sorted
+        let mut all_names: Vec<&str> = self.enums.iter().map(|e| e.name.as_str())
+            .chain(self.relations.iter().map(|r| r.name.as_str()))
+            .collect();
+        all_names.sort();
+
+        for name in all_names {
+            let columns_result = db.run_script(&format!("::columns {name}"))
+                .map_err(|e| Error::Query { detail: e.to_string() })?;
+            let columns = column_info::from_columns_result(&columns_result)?;
+
+            if columns.is_empty() {
+                continue;
+            }
+
+            let col_names: Vec<&str> = columns.iter().map(|c| c.name.as_str()).collect();
+            let has_phase = col_names.contains(&"phase");
+
+            // Query rows — filter to manifest phase if applicable
+            let col_list = col_names.join(", ");
+            let query = if has_phase {
+                format!(r#"?[{col_list}] := *{name}{{{col_list}}}, phase == "manifest" :order {}"#,
+                    col_names[0])
+            } else {
+                format!("?[{col_list}] := *{name}{{{col_list}}} :order {}", col_names[0])
+            };
+
+            let result = db.run_script(&query)
+                .map_err(|e| Error::Query { detail: format!("seed query {name}: {e}") })?;
+
+            let rows = result.get("rows").and_then(|v| v.as_array());
+            let rows = match rows {
+                Some(r) if !r.is_empty() => r,
+                _ => continue,
+            };
+
+            // Build key => value clause
+            let key_count = columns.iter().filter(|c| c.is_key).count();
+            let kv_clause = if key_count < columns.len() {
+                let keys = col_names[..key_count].join(", ");
+                let vals = col_names[key_count..].join(", ");
+                format!("{keys} => {vals}")
+            } else {
+                col_names.join(", ")
+            };
+
+            out.push_str(&format!("?[{col_list}] <- [\n"));
+            for row in rows {
+                if let Some(arr) = row.as_array() {
+                    let vals: Vec<String> = arr.iter().map(|v| {
+                        if let Some(s) = v.get("Str").and_then(|s| s.as_str()).or(v.as_str()) {
+                            let escaped = s.replace('\\', "\\\\").replace('"', "\\\"");
+                            format!("\"{escaped}\"")
+                        } else if let Some(b) = v.get("Bool").and_then(|b| b.as_bool()).or(v.as_bool()) {
+                            if b { "true".into() } else { "false".into() }
+                        } else if let Some(n) = v.get("Num") {
+                            if let Some(i) = n.get("Int").and_then(|i| i.as_i64()) {
+                                i.to_string()
+                            } else if let Some(f) = n.get("Float").and_then(|f| f.as_f64()) {
+                                f.to_string()
+                            } else {
+                                "null".into()
+                            }
+                        } else if let Some(i) = v.as_i64() {
+                            i.to_string()
+                        } else if let Some(f) = v.as_f64() {
+                            f.to_string()
+                        } else {
+                            "null".into()
+                        }
+                    }).collect();
+                    out.push_str(&format!("  [{}],\n", vals.join(", ")));
+                }
+            }
+            out.push_str(&format!("]\n:put {name} {{ {kv_clause} }}\n\n"));
+        }
+
+        Ok(out)
+    }
+
     /// Compute the file ID: blake3 of sorted relation names, truncated to u64.
     fn file_id(&self) -> u64 {
         let mut hasher = blake3::Hasher::new();
