@@ -134,6 +134,44 @@ impl SchemaGenerator {
         Ok(blake3::hash(text.as_bytes()))
     }
 
+    /// Generate deterministic CozoScript `:create` statements for all relations.
+    /// Requires DB access to get full column info for enum relations.
+    /// This is the DB→.cozo projection: a readable artifact, not an authoritative source.
+    pub fn to_cozo_init_text(&self, db: &criome_cozo::CriomeDb) -> Result<String, Error> {
+        let mut out = String::new();
+        let hash = self.schema_hash()?;
+        out.push_str(&format!("# Generated from live DB — do not edit manually\n"));
+        out.push_str(&format!("# Schema hash: {hash}\n\n"));
+
+        // Collect all relation names (enums + non-enums), sorted
+        let mut all_names: Vec<&str> = self.enums.iter().map(|e| e.name.as_str())
+            .chain(self.relations.iter().map(|r| r.name.as_str()))
+            .collect();
+        all_names.sort();
+
+        for name in all_names {
+            let columns_result = db.run_script(&format!("::columns {name}"))
+                .map_err(|e| Error::Query { detail: e.to_string() })?;
+            let columns = column_info::from_columns_result(&columns_result)?;
+
+            out.push_str(&format!(":create {name} {{\n"));
+            let key_count = columns.iter().filter(|c| c.is_key).count();
+            for (i, col) in columns.iter().enumerate() {
+                let separator = if col.is_key && i == key_count - 1 && key_count < columns.len() {
+                    " =>"
+                } else if i < columns.len() - 1 {
+                    ","
+                } else {
+                    ""
+                };
+                out.push_str(&format!("  {}: {}{}\n", col.name, col.col_type, separator));
+            }
+            out.push_str("}\n\n");
+        }
+
+        Ok(out)
+    }
+
     /// Compute the file ID: blake3 of sorted relation names, truncated to u64.
     fn file_id(&self) -> u64 {
         let mut hasher = blake3::Hasher::new();
