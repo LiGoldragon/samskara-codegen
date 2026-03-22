@@ -277,9 +277,9 @@ impl SchemaGenerator {
     }
 }
 
-/// Convert snake_case to PascalCase: `agent_session` → `AgentSession`.
+/// Convert delimited names to PascalCase: `agent_session` → `AgentSession`, `annas-archive` → `AnnasArchive`.
 fn to_pascal_case(s: &str) -> String {
-    s.split('_')
+    s.split(|c: char| c == '_' || c == '-')
         .map(|part| {
             let mut chars = part.chars();
             match chars.next() {
@@ -297,8 +297,8 @@ fn to_pascal_case(s: &str) -> String {
 /// Handles snake_case (`commit_type` → `commitType`), PascalCase (`CommitType` → `commitType`),
 /// and plain lowercase (`sol` → `sol`).
 fn to_capnp_enumerant(s: &str) -> String {
-    // If it contains underscores, treat as snake_case → camelCase
-    if s.contains('_') {
+    // If it contains separators (underscores or hyphens), treat as delimited → camelCase
+    if s.contains('_') || s.contains('-') {
         return to_camel_case(s);
     }
     // Otherwise, lowercase the first character
@@ -312,9 +312,10 @@ fn to_capnp_enumerant(s: &str) -> String {
     }
 }
 
-/// Convert snake_case to camelCase: `created_ts` → `createdTs`.
+/// Convert delimited names to camelCase: `created_ts` → `createdTs`, `read-write` → `readWrite`.
+/// Splits on both underscores and hyphens (Cap'n Proto identifiers cannot contain either).
 fn to_camel_case(s: &str) -> String {
-    let parts: Vec<&str> = s.split('_').collect();
+    let parts: Vec<&str> = s.split(|c| c == '_' || c == '-').collect();
     let mut result = String::new();
     for (i, part) in parts.iter().enumerate() {
         if i == 0 {
@@ -340,6 +341,8 @@ mod tests {
         assert_eq!(to_pascal_case("thought"), "Thought");
         assert_eq!(to_pascal_case("agent_session"), "AgentSession");
         assert_eq!(to_pascal_case("world_commit_ref"), "WorldCommitRef");
+        assert_eq!(to_pascal_case("annas-archive"), "AnnasArchive");
+        assert_eq!(to_pascal_case("rust-analyzer"), "RustAnalyzer");
     }
 
     #[test]
@@ -347,5 +350,17 @@ mod tests {
         assert_eq!(to_camel_case("created_ts"), "createdTs");
         assert_eq!(to_camel_case("name"), "name");
         assert_eq!(to_camel_case("ref_type"), "refType");
+        assert_eq!(to_camel_case("read-write"), "readWrite");
+        assert_eq!(to_camel_case("read-only"), "readOnly");
+        assert_eq!(to_camel_case("rust-analyzer"), "rustAnalyzer");
+    }
+
+    #[test]
+    fn test_to_capnp_enumerant() {
+        assert_eq!(to_capnp_enumerant("allowed"), "allowed");
+        assert_eq!(to_capnp_enumerant("read-write"), "readWrite");
+        assert_eq!(to_capnp_enumerant("read-only"), "readOnly");
+        assert_eq!(to_capnp_enumerant("commit_type"), "commitType");
+        assert_eq!(to_capnp_enumerant("CommitType"), "commitType");
     }
 }
