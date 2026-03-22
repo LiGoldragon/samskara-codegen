@@ -232,12 +232,10 @@ impl SchemaGenerator {
                 if let Some(arr) = row.as_array() {
                     let vals: Vec<String> = arr.iter().map(|v| {
                         if let Some(s) = v.get("Str").and_then(|s| s.as_str()).or(v.as_str()) {
-                            let escaped = s
-                                .replace('\\', "\\\\")
-                                .replace('"', "\\\"")
-                                .replace('\n', "\\n")
-                                .replace('\r', "\\r")
-                                .replace('\t', "\\t");
+                            // CozoScript has no escape sequences except \" in double-quoted
+                            // and \' in single-quoted strings. Backslashes are literal.
+                            // Use double quotes; only escape embedded double quotes.
+                            let escaped = s.replace('"', "\\\"");
                             format!("\"{escaped}\"")
                         } else if let Some(b) = v.get("Bool").and_then(|b| b.as_bool()).or(v.as_bool()) {
                             if b { "true".into() } else { "false".into() }
