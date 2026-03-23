@@ -27,11 +27,11 @@ impl SchemaGenerator {
     /// Introspect a CozoDB instance: query `::relations` and `::columns` for
     /// each relation, detect vocab enums, and build the full schema.
     pub fn from_db(db: &criome_cozo::CriomeDb) -> Result<Self, Error> {
-        // Query the Enum registry — the authority for which relations are enums.
+        // Query the Domain registry — the authority for which relations are domains.
         // PascalCase is the convention (fast visual signal).
         // The registry is the truth (authoritative data signal).
         let enum_registry: std::collections::HashSet<String> = db
-            .run_script("?[name] := *Enum{name}")
+            .run_script("?[name] := *Domain{name}")
             .ok()
             .and_then(|v| v.get("rows")?.as_array().cloned())
             .map(|rows| {
