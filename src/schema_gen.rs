@@ -71,7 +71,12 @@ impl SchemaGenerator {
 
             // Registry is authoritative when it exists.
             // PascalCase alone is the fallback when no registry.
-            let is_enum = if has_registry { in_registry } else { is_pascal };
+            let in_domain = if has_registry { in_registry } else { is_pascal };
+
+            // Single-key domains → capnp enum (variants are the key values).
+            // Composite-key domains → capnp struct (like any other relation).
+            let key_count = columns.iter().filter(|c| c.is_key).count();
+            let is_enum = in_domain && key_count == 1;
 
             if is_enum {
                 let enum_schema = vocab_detect::build_enum_schema(db, name, &columns)?;

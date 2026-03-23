@@ -52,7 +52,7 @@ mod tests {
     fn test_is_pascal_case() {
         assert!(is_pascal_case("Phase"));
         assert!(is_pascal_case("Dignity"));
-        assert!(is_pascal_case("Enum"));
+        assert!(is_pascal_case("Domain"));
         assert!(!is_pascal_case("thought"));
         assert!(!is_pascal_case("agent_session"));
         assert!(!is_pascal_case("samskrta"));
