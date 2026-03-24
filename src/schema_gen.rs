@@ -1,3 +1,5 @@
+use std::collections::HashMap;
+
 use crate::column_info::{self, ColumnInfo};
 use crate::datavalue;
 use crate::error::Error;
@@ -16,11 +18,24 @@ pub struct EnumSchema {
     pub variants: Vec<String>,
 }
 
+/// A field_type entry from the noesis scalar type graph.
+#[derive(Debug, Clone)]
+pub struct FieldTypeInfo {
+    pub kind: String,
+    pub target_domain: String,
+    pub unit_domain: String,
+}
+
 /// The core codegen object: holds all relation schemas and enums discovered
 /// from a CozoDB instance, and generates deterministic `.capnp` output.
+///
+/// When a field_type map is loaded (from the noesis-schema), field emission
+/// uses typed domain references instead of `:Text`. Without it, falls back
+/// to the legacy CozoDB-type-based mapping.
 pub struct SchemaGenerator {
     pub relations: Vec<RelationSchema>,
     pub enums: Vec<EnumSchema>,
+    pub field_type_map: HashMap<(String, String), FieldTypeInfo>,
 }
 
 impl SchemaGenerator {
@@ -89,12 +104,70 @@ impl SchemaGenerator {
             }
         }
 
-        Ok(Self { relations, enums })
+        // Load field_type graph if available (from noesis-schema).
+        let field_type_map = Self::load_field_type_map(db);
+
+        Ok(Self { relations, enums, field_type_map })
+    }
+
+    /// Load the field_type graph from the database.
+    /// Returns empty map if the field_type relation doesn't exist.
+    fn load_field_type_map(db: &criome_cozo::CriomeDb) -> HashMap<(String, String), FieldTypeInfo> {
+        let mut map = HashMap::new();
+        let result = db.run_script(
+            "?[relation, column, kind, target_domain, unit_domain] := \
+             *field_type{relation, column, kind, target_domain, unit_domain, description, phase, dignity}"
+        );
+        let result = match result {
+            Ok(v) => v,
+            Err(_) => return map, // field_type relation doesn't exist — legacy mode
+        };
+        let rows = match result.get("rows").and_then(|v| v.as_array()) {
+            Some(r) => r,
+            None => return map,
+        };
+        for row in rows {
+            if let Some(arr) = row.as_array() {
+                let relation = datavalue::as_str(arr.first().unwrap_or(&serde_json::Value::Null))
+                    .unwrap_or_default().to_string();
+                let column = datavalue::as_str(arr.get(1).unwrap_or(&serde_json::Value::Null))
+                    .unwrap_or_default().to_string();
+                let kind = datavalue::as_str(arr.get(2).unwrap_or(&serde_json::Value::Null))
+                    .unwrap_or_default().to_string();
+                let target_domain = datavalue::as_str(arr.get(3).unwrap_or(&serde_json::Value::Null))
+                    .unwrap_or_default().to_string();
+                let unit_domain = datavalue::as_str(arr.get(4).unwrap_or(&serde_json::Value::Null))
+                    .unwrap_or_default().to_string();
+                map.insert(
+                    (relation, column),
+                    FieldTypeInfo { kind, target_domain, unit_domain },
+                );
+            }
+        }
+        map
+    }
+
+    /// Resolve the capnp type for a (relation, column) pair.
+    /// Uses field_type graph when available, falls back to CozoDB column type.
+    fn resolve_field_type(&self, relation: &str, column: &str, col_type: &str) -> Result<CapnpType, Error> {
+        if let Some(ft) = self.field_type_map.get(&(relation.to_string(), column.to_string())) {
+            CapnpType::from_field_type(&ft.kind, &ft.target_domain)
+        } else if self.field_type_map.is_empty() {
+            // Legacy mode: no field_type graph loaded
+            CapnpType::from_cozo_type(col_type)
+        } else {
+            // field_type graph is loaded but this field is missing — error
+            Err(Error::TypeMap {
+                detail: format!("no field_type entry for {relation}.{column}"),
+            })
+        }
     }
 
     /// Generate deterministic `.capnp` schema text.
     pub fn to_capnp_text(&self) -> Result<String, Error> {
         let mut out = String::new();
+        let has_field_types = !self.field_type_map.is_empty();
+        let mut needs_typed_int = false;
 
         // File ID: blake3 of sorted relation names, truncated to u64
         let file_id = self.file_id();
@@ -111,13 +184,32 @@ impl SchemaGenerator {
             out.push_str("}\n\n");
         }
 
+        // Check if any field needs TypedInt (pre-scan)
+        if has_field_types {
+            for ft in self.field_type_map.values() {
+                if ft.kind == "int" {
+                    needs_typed_int = true;
+                    break;
+                }
+            }
+        }
+
+        // Emit TypedInt struct if needed
+        if needs_typed_int {
+            out.push_str("struct TypedInt {\n");
+            out.push_str("  measure @0 :UInt16;  # Measure dimension discriminant\n");
+            out.push_str("  unit @1 :UInt16;     # Unit discriminant within dimension\n");
+            out.push_str("  magnitude @2 :Int64; # The value\n");
+            out.push_str("}\n\n");
+        }
+
         // Structs (sorted alphabetically by relation name)
         for rel in &self.relations {
             let struct_name = to_pascal_case(&rel.name);
             out.push_str(&format!("struct {} {{\n", struct_name));
             for col in &rel.columns {
                 let field_name = to_camel_case(&col.name);
-                let capnp_type: CapnpType = col.col_type.parse()?;
+                let capnp_type = self.resolve_field_type(&rel.name, &col.name, &col.col_type)?;
                 out.push_str(&format!(
                     "  {} @{} :{};",
                     field_name, col.index, capnp_type.to_capnp_text()
